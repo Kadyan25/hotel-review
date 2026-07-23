@@ -21,13 +21,24 @@ export function ScrapeButton({ scrapeEnabled, propertyId }: ScrapeButtonProps) {
   const [isError, setIsError] = useState(false);
   const pollRef = useRef<number | null>(null);
 
+  // React Router keeps this component instance mounted across
+  // /properties/:slug param changes (it doesn't remount on a route param
+  // change alone) -- so an unmount-only cleanup isn't enough. Without this,
+  // switching to a different property while a poll from the previous one
+  // is still in flight leaves an orphaned interval running forever,
+  // periodically overwriting the current message with stale results for
+  // the property that's no longer even showing.
   useEffect(() => {
+    setRunning(false);
+    setMessage(null);
+    setIsError(false);
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
     };
-  }, []);
+  }, [propertyId]);
 
   const startPolling = () => {
+    if (pollRef.current) window.clearInterval(pollRef.current);
     pollRef.current = window.setInterval(async () => {
       try {
         if (propertyId) {
