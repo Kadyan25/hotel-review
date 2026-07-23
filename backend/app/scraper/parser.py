@@ -13,6 +13,13 @@ from patchright.async_api import Locator
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
 _NIGHTS_RE = re.compile(r"(\d+)")
 _DATE_PREFIX_RE = re.compile(r"^Reviewed:\s*")
+# The avatar block briefly renders a placeholder ("7 reviews", "Active since
+# 2018") before its flag+country element finishes loading -- confirmed live
+# that reviewers we scraped with these values have real countries in the
+# DOM moments later. Timing issue, not a selector issue; rather than retry
+# (adds scrape time for a cosmetic field), reject the placeholder and store
+# None -- wrong data is worse than missing data.
+_NOT_A_COUNTRY_RE = re.compile(r"^\d+ reviews?$|^Active since \d{4}$", re.IGNORECASE)
 
 
 def _parse_stay_month(raw: str | None) -> date | None:
@@ -73,6 +80,8 @@ async def parse_review_card(card: Locator) -> dict:
     avatar_lines = [line.strip() for line in (avatar_text or "").split("\n") if line.strip()]
     reviewer_name = avatar_lines[0] if avatar_lines else None
     reviewer_country = avatar_lines[1] if len(avatar_lines) > 1 else None
+    if reviewer_country and _NOT_A_COUNTRY_RE.match(reviewer_country):
+        reviewer_country = None
 
     positive_text = await _text_or_none(card, "review-positive-text")
     negative_text = await _text_or_none(card, "review-negative-text")
