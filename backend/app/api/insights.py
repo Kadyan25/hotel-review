@@ -1,8 +1,11 @@
+import logging
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.classification.keyword_classifier import has_any_match
 from app.classification.llm_client import classify_snippet_with_llm
@@ -90,18 +93,25 @@ async def topic_insights(
 
 
 @router.post("/insights/classify-llm", response_model=ClassifyLLMResponse)
-async def classify_llm(db: AsyncSession = Depends(get_db), settings: Settings = Depends(get_settings)):
+async def classify_llm(
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    property_id: int | None = None,
+):
     if not settings.llm_configured:
         return ClassifyLLMResponse(
             enabled=False, classified_count=0, message="LLM classification is not enabled/configured."
         )
 
-    # Candidates: reviews with no existing LLM-sourced topic row yet.
+    # Candidates: reviews with no existing LLM-sourced topic row yet, optionally
+    # scoped to one property (per-hotel "Get AI Insights" button).
     stmt = (
         select(Review)
         .outerjoin(ReviewTopic, and_(ReviewTopic.review_id == Review.id, ReviewTopic.source == "llm"))
         .where(ReviewTopic.id.is_(None))
     )
+    if property_id is not None:
+        stmt = stmt.where(Review.property_id == property_id)
     candidates = (await db.execute(stmt)).scalars().all()
 
     # "Ambiguous" = keyword pass found nothing on non-trivial text -- that's
@@ -114,9 +124,18 @@ async def classify_llm(db: AsyncSession = Depends(get_db), settings: Settings = 
     ambiguous = ambiguous[: settings.max_llm_classifications]
 
     classified_count = 0
+    failed_count = 0
     for review in ambiguous:
         text = "\n".join(t for t in (review.positive_text, review.negative_text) if t)
-        results = await classify_snippet_with_llm(text, settings)
+        try:
+            results = await classify_snippet_with_llm(text, settings)
+        except Exception:
+            # One bad call (rate limit, transient network error) shouldn't
+            # lose progress already made on the rest of the batch.
+            logger.exception("LLM classification failed for review_id=%d, skipping", review.id)
+            failed_count += 1
+            continue
+
         if not results:
             continue
         for item in results:
@@ -133,8 +152,8 @@ async def classify_llm(db: AsyncSession = Depends(get_db), settings: Settings = 
 
     await db.commit()
 
-    return ClassifyLLMResponse(
-        enabled=True,
-        classified_count=classified_count,
-        message=f"Classified {classified_count} review(s) via Claude Haiku.",
-    )
+    message = f"Classified {classified_count} review(s) via Claude Haiku."
+    if failed_count:
+        message += f" {failed_count} failed and were skipped."
+
+    return ClassifyLLMResponse(enabled=True, classified_count=classified_count, message=message)

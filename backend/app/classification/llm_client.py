@@ -33,7 +33,18 @@ async def classify_snippet_with_llm(text: str, settings: Settings) -> list[dict]
         messages=[{"role": "user", "content": text[:2000]}],
     )
 
-    raw = "".join(block.text for block in response.content if block.type == "text")
+    raw = "".join(block.text for block in response.content if block.type == "text").strip()
+    # Claude sometimes wraps the response in ```json ... ``` fences despite
+    # the system prompt explicitly saying not to -- confirmed by live testing
+    # this isn't rare (happened on the very first real test). Defensive
+    # stripping here, not just a prompt instruction, since silently treating
+    # a fenced response as "no topics found" would be a real accuracy bug.
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
