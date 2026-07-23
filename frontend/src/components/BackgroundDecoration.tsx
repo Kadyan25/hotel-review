@@ -1,18 +1,21 @@
-// Purely decorative, aria-hidden, fixed behind all content. An actual
-// illustrated blob shape (not just blurred circles) plus slow drift so the
-// page doesn't read as flat/static.
+// Purely decorative, aria-hidden, fixed behind all content. Three soft
+// blurred blobs in the same blue/violet/teal family as the KPI icon accents,
+// so the background reads as "matching the UI" rather than an arbitrary
+// color wash. Blur is applied per-shape (filter), not via a full-viewport
+// backdrop-blur overlay -- that overlay was muddying everything into one
+// flat gray-blue smear instead of three distinguishable soft shapes.
 export function BackgroundDecoration() {
   return (
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
       <svg
-        className="animate-float-slow absolute -top-32 -right-24 h-[36rem] w-[36rem] opacity-60"
+        className="animate-float-slow absolute -top-24 -right-16 h-[34rem] w-[34rem] opacity-45 blur-3xl"
         viewBox="0 0 600 600"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
           <linearGradient id="blob-a" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#bfe3fe" />
-            <stop offset="100%" stopColor="#93d2fd" />
+            <stop offset="0%" stopColor="#93d2fd" />
+            <stop offset="100%" stopColor="#2680ea" />
           </linearGradient>
         </defs>
         <path
@@ -22,14 +25,14 @@ export function BackgroundDecoration() {
       </svg>
 
       <svg
-        className="animate-float-slower absolute top-1/3 -left-32 h-[30rem] w-[30rem] opacity-50"
+        className="animate-float-slower absolute top-1/3 -left-28 h-[28rem] w-[28rem] opacity-35 blur-3xl"
         viewBox="0 0 600 600"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
           <linearGradient id="blob-b" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#a5f3fc" />
-            <stop offset="100%" stopColor="#c7d2fe" />
+            <stop offset="0%" stopColor="#c4b5fd" />
+            <stop offset="100%" stopColor="#8b5cf6" />
           </linearGradient>
         </defs>
         <path
@@ -39,14 +42,14 @@ export function BackgroundDecoration() {
       </svg>
 
       <svg
-        className="animate-float-slow absolute -bottom-40 left-1/4 h-96 w-96 opacity-40"
+        className="animate-float-slow absolute -bottom-32 left-1/4 h-[26rem] w-[26rem] opacity-40 blur-3xl"
         viewBox="0 0 600 600"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
           <linearGradient id="blob-c" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#99f6e4" />
-            <stop offset="100%" stopColor="#bfe3fe" />
+            <stop offset="100%" stopColor="#14b8a6" />
           </linearGradient>
         </defs>
         <path
@@ -54,8 +57,6 @@ export function BackgroundDecoration() {
           d="M420,290Q410,360,345,400Q280,440,215,405Q150,370,135,300Q120,230,175,180Q230,130,300,145Q370,160,405,220Q440,280,420,290Z"
         />
       </svg>
-
-      <div className="absolute inset-0 backdrop-blur-3xl" />
     </div>
   );
 }
