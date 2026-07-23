@@ -55,6 +55,7 @@ export interface TopicInsightItem {
   negative_count: number;
   positive_count: number;
   negative_pct_of_total_negative: number;
+  positive_pct_of_total_positive: number;
 }
 
 export interface TopicInsightsResponse {
@@ -66,4 +67,14 @@ export interface ClassifyLLMResponse {
   enabled: boolean;
   classified_count: number;
   message: string;
+  already_run_today: boolean;
+  last_run_at: string | null;
+  briefing_text: string | null;
+}
+
+export interface LlmStatusResponse {
+  enabled: boolean;
+  last_run_at: string | null;
+  can_run_today: boolean;
+  briefing_text: string | null;
 }

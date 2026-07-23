@@ -4,11 +4,18 @@ import { KpiCard } from "../components/KpiCard";
 import { PropertyBreakdown } from "../components/PropertyBreakdown";
 import { TrendChart } from "../components/TrendChart";
 import { TopicInsightsPanel } from "../components/TopicInsightsPanel";
+import { AiInsightsPanel } from "../components/AiInsightsPanel";
 import { AiInsightsButton } from "../components/AiInsightsButton";
 import { ScrapeButton } from "../components/ScrapeButton";
 import { fetchHealth } from "../api/health";
-import { fetchProperties, fetchPropertySummary, fetchTopicInsights, fetchWeeklySummary } from "../api/dashboard";
-import type { PropertySummary, TopicInsightsResponse, WeeklySummary } from "../types/dashboard";
+import {
+  fetchLlmStatus,
+  fetchProperties,
+  fetchPropertySummary,
+  fetchTopicInsights,
+  fetchWeeklySummary,
+} from "../api/dashboard";
+import type { ClassifyLLMResponse, PropertySummary, TopicInsightsResponse, WeeklySummary } from "../types/dashboard";
 
 function formatDelta(delta: number | null): { label: string; tone: "up" | "down" | "flat" } {
   if (delta === null) return { label: "no prior data", tone: "flat" };
@@ -23,11 +30,20 @@ export function OverviewPage() {
   const [summaries, setSummaries] = useState<PropertySummary[]>([]);
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null);
   const [topics, setTopics] = useState<TopicInsightsResponse | null>(null);
+  const [aiTopics, setAiTopics] = useState<TopicInsightsResponse | null>(null);
+  const [briefingText, setBriefingText] = useState<string | null>(null);
+  const [briefingGeneratedAt, setBriefingGeneratedAt] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHealth().then((h) => {
       setLlmEnabled(h.llm_classification_enabled);
       setScrapeEnabled(h.scrape_endpoint_enabled);
+      if (h.llm_classification_enabled) {
+        fetchLlmStatus().then((s) => {
+          setBriefingText(s.briefing_text);
+          setBriefingGeneratedAt(s.last_run_at);
+        });
+      }
     });
     fetchProperties().then(async (props) => {
       const summaryList = await Promise.all(props.map((p) => fetchPropertySummary(p.id)));
@@ -35,7 +51,15 @@ export function OverviewPage() {
     });
     fetchWeeklySummary().then(setWeekly);
     fetchTopicInsights().then(setTopics);
+    fetchTopicInsights(undefined, "llm").then(setAiTopics);
   }, []);
+
+  const handleClassified = (result: ClassifyLLMResponse) => {
+    fetchTopicInsights().then(setTopics);
+    fetchTopicInsights(undefined, "llm").then(setAiTopics);
+    setBriefingText(result.briefing_text);
+    setBriefingGeneratedAt(result.last_run_at);
+  };
 
   const delta = formatDelta(weekly?.delta ?? null);
 
@@ -48,9 +72,9 @@ export function OverviewPage() {
             Guest review sentiment across all Azzurro Hotels properties.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-start gap-2">
           <ScrapeButton scrapeEnabled={scrapeEnabled} />
-          <AiInsightsButton llmEnabled={llmEnabled} />
+          <AiInsightsButton llmEnabled={llmEnabled} onClassified={handleClassified} />
         </div>
       </div>
 
@@ -90,8 +114,14 @@ export function OverviewPage() {
         <PropertyBreakdown summaries={summaries} />
       </div>
 
-      <div className="mt-8">
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
         {topics && <TopicInsightsPanel items={topics.items} periodDays={topics.period_days} />}
+        <AiInsightsPanel
+          items={aiTopics?.items ?? null}
+          periodDays={aiTopics?.period_days ?? 30}
+          briefingText={briefingText}
+          briefingGeneratedAt={briefingGeneratedAt}
+        />
       </div>
     </>
   );

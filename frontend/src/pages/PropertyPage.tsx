@@ -6,13 +6,26 @@ import { KpiCard } from "../components/KpiCard";
 import { PropertyThumbnail } from "../components/PropertyThumbnail";
 import { TrendChart } from "../components/TrendChart";
 import { TopicInsightsPanel } from "../components/TopicInsightsPanel";
+import { AiInsightsPanel } from "../components/AiInsightsPanel";
 import { FilterBar } from "../components/FilterBar";
 import { ReviewFeed } from "../components/ReviewFeed";
 import { AiInsightsButton } from "../components/AiInsightsButton";
 import { ScrapeButton } from "../components/ScrapeButton";
 import { fetchHealth } from "../api/health";
-import { fetchProperties, fetchPropertySummary, fetchTopicInsights, fetchWeeklySummary } from "../api/dashboard";
-import type { PropertyItem, PropertySummary, TopicInsightsResponse, WeeklySummary } from "../types/dashboard";
+import {
+  fetchLlmStatus,
+  fetchProperties,
+  fetchPropertySummary,
+  fetchTopicInsights,
+  fetchWeeklySummary,
+} from "../api/dashboard";
+import type {
+  ClassifyLLMResponse,
+  PropertyItem,
+  PropertySummary,
+  TopicInsightsResponse,
+  WeeklySummary,
+} from "../types/dashboard";
 
 function formatDelta(delta: number | null): { label: string; tone: "up" | "down" | "flat" } {
   if (delta === null) return { label: "no prior data", tone: "flat" };
@@ -27,6 +40,9 @@ export function PropertyPage() {
   const [summary, setSummary] = useState<PropertySummary | null>(null);
   const [weekly, setWeekly] = useState<WeeklySummary | null>(null);
   const [topics, setTopics] = useState<TopicInsightsResponse | null>(null);
+  const [aiTopics, setAiTopics] = useState<TopicInsightsResponse | null>(null);
+  const [briefingText, setBriefingText] = useState<string | null>(null);
+  const [briefingGeneratedAt, setBriefingGeneratedAt] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [llmEnabled, setLlmEnabled] = useState(false);
   const [scrapeEnabled, setScrapeEnabled] = useState(false);
@@ -49,8 +65,21 @@ export function PropertyPage() {
       fetchPropertySummary(match.id).then(setSummary);
       fetchWeeklySummary(match.id).then(setWeekly);
       fetchTopicInsights(match.id).then(setTopics);
+      fetchTopicInsights(match.id, "llm").then(setAiTopics);
+      fetchLlmStatus(match.id).then((s) => {
+        setBriefingText(s.briefing_text);
+        setBriefingGeneratedAt(s.last_run_at);
+      });
     });
   }, [slug]);
+
+  const handleClassified = (result: ClassifyLLMResponse) => {
+    if (!property) return;
+    fetchTopicInsights(property.id).then(setTopics);
+    fetchTopicInsights(property.id, "llm").then(setAiTopics);
+    setBriefingText(result.briefing_text);
+    setBriefingGeneratedAt(result.last_run_at);
+  };
 
   if (notFound) {
     return (
@@ -87,17 +116,17 @@ export function PropertyPage() {
             <h1 className="text-xl font-semibold text-slate-900">{property.name}</h1>
             <p className="mt-1 text-sm text-slate-500">{property.city}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             <a
               href={property.booking_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700"
+              className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700"
             >
               View on Booking.com <ExternalLink className="h-3.5 w-3.5" />
             </a>
             <ScrapeButton scrapeEnabled={scrapeEnabled} propertyId={property.id} />
-            <AiInsightsButton llmEnabled={llmEnabled} propertyId={property.id} />
+            <AiInsightsButton llmEnabled={llmEnabled} propertyId={property.id} onClassified={handleClassified} />
           </div>
         </div>
       </Card>
@@ -130,8 +159,14 @@ export function PropertyPage() {
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 space-y-6">
           {topics && <TopicInsightsPanel items={topics.items} periodDays={topics.period_days} />}
+          <AiInsightsPanel
+            items={aiTopics?.items ?? null}
+            periodDays={aiTopics?.period_days ?? 30}
+            briefingText={briefingText}
+            briefingGeneratedAt={briefingGeneratedAt}
+          />
         </div>
 
         <div className="lg:col-span-2">

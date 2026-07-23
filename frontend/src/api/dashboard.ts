@@ -1,6 +1,7 @@
 import { apiGet, apiPost } from "./client";
 import type {
   ClassifyLLMResponse,
+  LlmStatusResponse,
   PropertyItem,
   PropertySummary,
   ReviewListResponse,
@@ -43,14 +44,25 @@ export function fetchWeeklySummary(propertyId?: number): Promise<WeeklySummary> 
   return apiGet<WeeklySummary>(`/api/insights/weekly-summary${params}`);
 }
 
-export function fetchTopicInsights(propertyId?: number): Promise<TopicInsightsResponse> {
-  const params = propertyId ? `?property_id=${propertyId}` : "";
-  return apiGet<TopicInsightsResponse>(`/api/insights/topics${params}`);
+export function fetchTopicInsights(
+  propertyId?: number,
+  source?: "keyword" | "llm"
+): Promise<TopicInsightsResponse> {
+  const params = new URLSearchParams();
+  if (propertyId) params.set("property_id", String(propertyId));
+  if (source) params.set("source", source);
+  const qs = params.toString();
+  return apiGet<TopicInsightsResponse>(`/api/insights/topics${qs ? `?${qs}` : ""}`);
 }
 
 export function classifyWithLLM(propertyId?: number): Promise<ClassifyLLMResponse> {
   const params = propertyId ? `?property_id=${propertyId}` : "";
   return apiPost<ClassifyLLMResponse>(`/api/insights/classify-llm${params}`);
+}
+
+export function fetchLlmStatus(propertyId?: number): Promise<LlmStatusResponse> {
+  const params = propertyId ? `?property_id=${propertyId}` : "";
+  return apiGet<LlmStatusResponse>(`/api/insights/llm-status${params}`);
 }
 
 export interface ScrapeStatus {
