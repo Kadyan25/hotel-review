@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     enable_llm_classification: bool = False
     max_llm_classifications: int = 50
     max_reviews_per_property_apify: int = 500
+    scrape_max_pages_per_run: int = 15
+    scrape_lookback_days: int = 30
+    scrape_full_history: bool = False
+    scrape_headless: bool = True
 
     allowed_origins: str = "http://localhost:5173"
 

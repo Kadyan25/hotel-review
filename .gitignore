@@ -21,6 +21,9 @@ backend/playwright-report/
 backend/test-results/
 **/.cache/ms-playwright/
 
+# Claude Code local tooling state
+.claude/
+
 # Editors / OS
 .vscode/
 .idea/
