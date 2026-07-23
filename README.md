@@ -1,15 +1,14 @@
 # Azzurro Hotels — Review Insights Dashboard
 
-Collects Booking.com guest reviews for four Azzurro Hotels properties and surfaces them in an operations dashboard with topic-based insights.
-
-**Status: Phase 0 (scaffolding) complete.** Backend + frontend run locally and talk to each other. Scraper, API, dashboard, and insights land in subsequent phases — see `build-plan.md` for the full roadmap (not committed to the repo; local planning doc).
+Collects Booking.com guest reviews for four Azzurro Hotels properties (Surry Hills, Potts Point, Central Sydney, Darling Harbour) and surfaces them in an operations dashboard with topic-based insights, built for non-technical ops staff.
 
 ## Stack
 
 - **Backend:** Python 3.13 / FastAPI / SQLAlchemy (async) / Alembic / Postgres
-- **Frontend:** Vite / React / TypeScript / Tailwind CSS
-- **Scraper:** Patchright (Playwright fork with anti-detection patches) — added in Phase 1
+- **Frontend:** Vite / React / TypeScript / Tailwind CSS / React Router / Recharts
+- **Scraper:** Patchright (a Playwright fork with anti-detection patches)
 - **Optional AI classification:** Claude Haiku 4.5, off by default
+- **Optional scraper fallback:** Apify (`reviewly/booking-reviews-scraper`)
 
 ## Setup
 
@@ -34,6 +33,7 @@ cd backend
 python -m venv .venv
 source .venv/Scripts/activate   # Windows Git Bash; use .venv\Scripts\Activate.ps1 for PowerShell
 pip install -r requirements.txt
+python -m patchright install chromium
 cp .env.example .env
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
@@ -52,15 +52,131 @@ npm run dev
 
 Opens at `http://localhost:5173`.
 
-## Environment variables
+## Running the scraper
 
-See `backend/.env.example` and `frontend/.env.example`. `ANTHROPIC_API_KEY` and `APIFY_API_TOKEN` are both optional — the app runs fully without them (keyword-only classification, Playwright-only scraping).
+Three ways to collect/update reviews, in increasing order of automation:
+
+### A. CLI, one property (the reliable default)
+
+```bash
+cd backend
+python scripts/run_scrape.py --property surry-hills
+```
+
+Slugs: `surry-hills`, `potts-point`, `central-sydney`, `darling-harbour`. Scoped to the last 30 days by default (`SCRAPE_LOOKBACK_DAYS`) and stops early once it hits already-seen reviews — safe to re-run anytime.
+
+### B. CLI, all four properties in one go
+
+```bash
+python scripts/run_all_properties.py
+```
+
+Same script the daily scheduled task (below) calls. Loops all four with human-paced spacing between them, keeps going if one property fails.
+
+### C. From the dashboard UI (manual trigger, off by default)
+
+Every property page has a **"Refresh reviews"** button, and the overview page has **"Refresh all."** These call a backend endpoint that's **disabled unless `ENABLE_SCRAPE_ENDPOINT=true`** in `backend/.env`. Off by default deliberately — see "Where the scraper is allowed to run" below. Turn it on for local/demo use:
+
+```
+# backend/.env
+ENABLE_SCRAPE_ENDPOINT=true
+```
+
+The button shows a spinner and polls a status endpoint until the run finishes (usually 1–3 minutes per property).
+
+### Keeping data fresh automatically (daily)
+
+`scripts/run_all_properties.py` is the entrypoint — schedule it with your OS's own scheduler, since the scraper must run from a residential machine (see below), not a cloud cron:
+
+**Windows (Task Scheduler):**
+```powershell
+$action = New-ScheduledTaskAction -Execute "D:\Azuro\backend\.venv\Scripts\python.exe" -Argument "scripts\run_all_properties.py" -WorkingDirectory "D:\Azuro\backend"
+$trigger = New-ScheduledTaskTrigger -Daily -At 3am
+Register-ScheduledTask -TaskName "AzzurroReviewScrape" -Action $action -Trigger $trigger
+```
+
+**Linux/macOS (cron), for reference if ever run from a residential server:**
+```cron
+0 3 * * * cd /path/to/Azuro/backend && .venv/bin/python scripts/run_all_properties.py >> /var/log/azzurro-scrape.log 2>&1
+```
+
+Both approaches reuse the same incremental logic as the manual triggers — a daily run only picks up reviews posted since the last run, it doesn't re-fetch everything.
+
+### Where the scraper is allowed to run
+
+The scraper's reliability depends on running from a real residential IP, not a datacenter one (see "Review collection method" below). **It must run from your own machine, not from a cloud deployment** — this is why the manual UI trigger is gated behind an env var that stays `false` on a public Railway/cloud deployment, and why the "official" way to update data is the CLI or the gated local UI button, not something exposed by default on a public demo.
 
 ## Sample data
 
-`data/sample_reviews.json` will contain a committed snapshot of real scraped reviews (added in Phase 2).
+`data/sample_reviews.json` — a committed snapshot of real reviews scraped from all four properties (47 reviews as of the last export). Re-export anytime with:
 
-## Known limitations (so far)
+```bash
+python scripts/export_sample_data.py
+```
 
-- Scraping Booking.com without permission likely conflicts with their Terms of Service — this project is built for educational/trial-evaluation purposes only, at low request volume. Full discussion lands in this README once the scraper is built (Phase 1–2).
-- This section will be filled in progressively as each phase completes, not written all at once at the end.
+## Architecture overview
+
+```
+Azuro/
+├── docker-compose.yml       # local Postgres
+├── backend/
+│   ├── app/
+│   │   ├── api/              # FastAPI routers: properties, reviews, insights, scrape, health
+│   │   ├── models/           # SQLAlchemy: Property, Review, ReviewTopic, ScrapeRun
+│   │   ├── schemas/          # Pydantic request/response models
+│   │   ├── services/         # scrape_service.py -- shared by CLI, cron, and the API endpoint
+│   │   ├── scraper/          # booking_scraper.py, parser.py, human.py, apify_fallback.py
+│   │   ├── classification/   # keyword lexicon/classifier + Claude Haiku client
+│   │   └── db/                # session, base
+│   ├── scripts/               # run_scrape.py, run_all_properties.py, export_sample_data.py, classify_keyword.py
+│   └── alembic/                # migrations
+├── frontend/
+│   └── src/
+│       ├── pages/              # OverviewPage (collective), PropertyPage (per-hotel)
+│       ├── components/         # dashboard components + components/ui (button/select/date-picker)
+│       └── api/                 # typed fetch wrappers
+└── data/sample_reviews.json
+```
+
+**Data flow:** scraper (or Apify fallback) → Postgres (`reviews`, `scrape_runs`) → keyword classifier populates `review_topics` (source=`keyword`) → optional Claude Haiku fallback adds more (`source=`llm`) for text the keyword pass missed → FastAPI aggregation endpoints → React dashboard.
+
+**Dashboard structure:** `/` is the collective overview (KPIs across all properties, an aggregate trend graph, property selector cards, aggregate topic insights). `/properties/:slug` is one hotel's own page (its KPIs, its trend graph, its topic breakdown, its full paginated review feed with date/topic filters, its own scrape and AI-insights triggers).
+
+## Review collection method
+
+1. **Primary — Patchright (self-hosted, free), run locally.** Booking.com runs Akamai Bot Manager; research and live testing both point to residential IPs faring meaningfully better than datacenter ones, so this runs from your own machine, not a cloud box.
+2. **The actual fix that mattered:** headless Chromium self-identifies as `HeadlessChrome` in its `User-Agent` header. Live testing confirmed Booking's reviews GraphQL endpoint (`ReviewList`) rejects that specific string with a structured `400 Request not supported` — not sophisticated fingerprinting, a simple check, and one Patchright's CDP-level patches don't cover on their own. Fixed by overriding the context's `user_agent` to the same Chromium build with "Headless" stripped.
+3. **Human-mimicking pacing** (`app/scraper/human.py`): every click moves through randomized curved waypoints instead of an instant jump, every wait is randomized (not fixed), an occasional longer "reading pause" breaks up the cadence every ~8 pages, and a session pacing cap stops a run before it turns into a marathon.
+4. **Recent-window scope, not full history:** each run stops at `SCRAPE_LOOKBACK_DAYS` (30 by default) — Surry Hills alone has 220 pages / ~2,200 reviews of history; scraping all of it isn't the goal for an operational dashboard focused on recent sentiment. Full historical backfill is available (`SCRAPE_FULL_HISTORY=true`) as a deliberate, separate one-time run.
+5. **Dedup:** Booking's DOM exposes no review ID anywhere, confirmed by inspection — the dedup key is a SHA-256 hash of `(reviewer_name, review_date, positive_text, negative_text)`.
+6. **Fallback — Apify** (`reviewly/booking-reviews-scraper`), triggered automatically only if the primary scraper gets blocked. Cost-capped (`MAX_REVIEWS_PER_PROPERTY_APIFY`), and live-tested to confirm it actually works and to map its (different, and less complete) schema onto the same internal shape as the primary scraper.
+7. **Sentiment signal:** Booking.com natively splits reviews into liked/disliked text blocks — used directly as the sentiment signal for keyword classification, rather than inferring sentiment from scratch.
+
+### ToS
+
+Booking.com's terms explicitly prohibit automated scraping without prior written permission. This project is built for educational/trial-evaluation purposes only, at low request volume, with no attempt to evade detection at scale.
+
+## Review insights methodology
+
+1. **Keyword pass (default, always on, free):** a curated phrase lexicon per topic (`app/classification/keyword_lexicon.py`), matched against `positive_text`/`negative_text` independently — sentiment comes from which field matched, not a separate sentiment model. Every topic (cleanliness, check-in, staff, noise, facilities, location, room condition, value for money) gets a flat confidence score, since a keyword match is binary, not graded.
+2. **LLM fallback (Claude Haiku 4.5, off by default):** only for reviews where the keyword pass found nothing on non-trivial text — e.g. non-English reviews the English-only lexicon misses. Hard-capped (`MAX_LLM_CLASSIFICATIONS`, default 50) so a single run can't exceed a few cents. Toggle with `ENABLE_LLM_CLASSIFICATION=true` + a real `ANTHROPIC_API_KEY`.
+3. Every classification row records its `source` (`keyword`/`llm`) so the methodology is auditable, not just asserted.
+
+## Known limitations and assumptions
+
+- **Scraping reliability is probabilistic, not guaranteed.** The human-pacing and UA fixes measurably worked in testing (100% success rate across all 4 properties during development), but Booking.com can change its detection at any time.
+- **Reviewer country has a rare render-timing bug:** the avatar block briefly shows a placeholder ("7 reviews", "Active since 2018") before its flag/country element finishes loading. Confirmed live that affected reviewers have real countries in the DOM moments later. Mitigated by rejecting known placeholder patterns and storing `null` rather than wrong data — a handful of reviews have a `null` country as a result, better than a wrong one.
+- **One unresolved parsing edge case:** a single review has `reviewer_name="A"` with a stray value in the country field, not matching the placeholder-pattern fix above. Left as-is rather than guessing at a fix without more examples to pattern-match against.
+- **Apify fallback is lower fidelity than the primary scraper** — its schema has no reviewer country and no length-of-stay at all. A live cross-check also found the same review scored differently between the two sources (rating 3 direct vs. 2 via Apify) — a real, documented discrepancy, not swept under the rug.
+- **Property thumbnails are hotlinked**, not downloaded/rehosted, directly from Booking.com's own CDN (`cf.bstatic.com`) — these are the properties' own photos. The URLs include a signed token that may expire; the UI falls back to an icon badge if an image fails to load.
+- **Keyword classification is English-only** by construction — the LLM fallback exists specifically to cover what it misses (see the Italian-language test case that surfaced a real markdown-fence parsing bug, since fixed, in `app/classification/llm_client.py`).
+- **Weekly comparison uses rolling 7-day windows** (today − 7 days vs. the 7 days before that), not calendar weeks — matches how ops staff actually think about "this week vs last week" day-to-day.
+- **`stay_date` is approximated to the 1st of the month** — Booking only ever shows month + year for the stay, never an exact day.
+
+## Logs
+
+Backend logs go to stdout with `%(asctime)s %(levelname)s %(name)s: %(message)s` formatting (`app/logging_config.py`) — when running `uvicorn --reload`, they print directly to the terminal. Unhandled API errors are logged with full stack traces server-side and return a generic `{"detail": "Internal server error"}` to the client, so nothing sensitive leaks into a response. Scraper runs additionally log to the `scrape_runs` table (status, error message, timestamps) — check there for scrape history beyond what's in the terminal.
+
+## Environment variables
+
+See `backend/.env.example` and `frontend/.env.example`. `ANTHROPIC_API_KEY`, `APIFY_API_TOKEN`, and `ENABLE_SCRAPE_ENDPOINT` are all optional/off-by-default — the app runs fully without them (keyword-only classification, Playwright-only scraping, CLI-only updates).
