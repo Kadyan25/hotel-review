@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: azzurro-reviews-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: azzurro
+      POSTGRES_PASSWORD: azzurro
+      POSTGRES_DB: azzurro_reviews
+    ports:
+      - "5437:5432"
+    volumes:
+      - azzurro_reviews_pgdata:/var/lib/postgresql/data
+
+volumes:
+  azzurro_reviews_pgdata:
