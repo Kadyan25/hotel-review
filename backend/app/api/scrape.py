@@ -49,6 +49,10 @@ async def trigger_property_scrape(
 
 @router.get("/properties/{property_id}/scrape-status")
 async def property_scrape_status(property_id: int, db: AsyncSession = Depends(get_db)):
+    prop = await db.get(Property, property_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail="property not found")
+
     result = await db.execute(
         select(ScrapeRun).where(ScrapeRun.property_id == property_id).order_by(ScrapeRun.started_at.desc()).limit(1)
     )

@@ -14,7 +14,7 @@ from app.config import Settings, get_settings
 from app.db.session import async_session_maker
 from app.models import Property, Review, ScrapeRun
 from app.scraper.apify_fallback import fetch_reviews_via_apify
-from app.scraper.booking_scraper import ScraperBlockedError, scrape_property_reviews
+from app.scraper.booking_scraper import scrape_property_reviews
 from app.scraper.human import human_delay
 from app.scraper.properties import PROPERTIES, PropertyDef
 
@@ -67,8 +67,14 @@ async def scrape_one_property(
         result = await scrape_property_reviews(prop_def, max_pages=max_pages, known_external_ids=known_ids, cutoff_date=cutoff_date)
         scraped = result.reviews
         thumbnail_url = result.thumbnail_url
-    except ScraperBlockedError as exc:
-        logger.warning("primary scraper blocked for %s: %s -- trying Apify fallback", prop.slug, exc)
+    except Exception as exc:
+        # Not just ScraperBlockedError -- a launch failure (e.g. no Chromium
+        # binary on a host that never ran `patchright install chromium`,
+        # such as a bare Railway container) is a different exception type
+        # from Booking.com actively blocking us, but the operator cares
+        # about the same thing either way: "did the run produce data."
+        # Apify is the fallback for any reason the primary path didn't work.
+        logger.warning("primary scraper failed for %s: %s -- trying Apify fallback", prop.slug, exc)
         if not settings.apify_configured:
             run.status = "failed"
             run.error_message = f"Playwright blocked and Apify not configured: {exc}"
