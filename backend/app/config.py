@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,6 +8,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://azzurro:azzurro@localhost:5437/azzurro_reviews"
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_asyncpg_driver(cls, v: str) -> str:
+        # Railway (and Heroku-style hosts) hand out a plain postgresql://
+        # or postgres:// URL with no driver suffix -- SQLAlchemy then
+        # defaults to psycopg2, which isn't installed (this app is
+        # asyncpg-only throughout). Normalize once here so every caller
+        # (app engine, alembic env.py, scripts) gets the right dialect
+        # without needing to know about this quirk.
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix) :]
+        return v
 
     anthropic_api_key: str | None = None
     apify_api_token: str | None = None
