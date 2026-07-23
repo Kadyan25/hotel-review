@@ -7,7 +7,7 @@ Collects Booking.com guest reviews for four Azzurro Hotels properties and surfac
 ## Stack
 
 - **Backend:** Python 3.13 / FastAPI / SQLAlchemy (async) / Alembic / Postgres
-- **Frontend:** Vite / React / TypeScript
+- **Frontend:** Vite / React / TypeScript / Tailwind CSS
 - **Scraper:** Patchright (Playwright fork with anti-detection patches) — added in Phase 1
 - **Optional AI classification:** Claude Haiku 4.5, off by default
 
