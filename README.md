@@ -2,6 +2,13 @@
 
 Collects Booking.com guest reviews for four Azzurro Hotels properties (Surry Hills, Potts Point, Central Sydney, Darling Harbour) and surfaces them in an operations dashboard with topic-based insights, built for non-technical ops staff.
 
+## Live demo
+
+- **Dashboard:** https://hotel-review-production.up.railway.app
+- **API:** https://backend-production-7450c.up.railway.app/api/health
+
+Runs against a real Postgres instance seeded with 47 real reviews scraped from all four properties. The manual "Refresh reviews" scrape trigger is intentionally disabled on this public deployment (see "Where the scraper is allowed to run" below) — AI Insights is fully live.
+
 ## Stack
 
 - **Backend:** Python 3.13 / FastAPI / SQLAlchemy (async) / Alembic / Postgres
@@ -106,6 +113,20 @@ Both approaches reuse the same incremental logic as the manual triggers — a da
 
 The scraper's reliability depends on running from a real residential IP, not a datacenter one (see "Review collection method" below). **It must run from your own machine, not from a cloud deployment** — this is why the manual UI trigger is gated behind an env var that stays `false` on a public Railway/cloud deployment, and why the "official" way to update data is the CLI or the gated local UI button, not something exposed by default on a public demo.
 
+## Deployment
+
+The live demo runs on Railway: `Postgres`, `backend` (FastAPI, Nixpacks), and `hotel-review` (frontend, Vite `preview` server) as three services in one project. To reproduce:
+
+1. **Postgres:** provision a Railway Postgres service.
+2. **Backend:** deploy `backend/` (`railway up` from that directory). Set variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `ANTHROPIC_API_KEY`, `APIFY_API_TOKEN`, `ENABLE_SCRAPE_ENDPOINT=false` (**never `true`** on a public host — see above), `ALLOWED_ORIGINS=<frontend public URL>`. `backend/railway.json` runs `alembic upgrade head` before `uvicorn` on every deploy.
+3. **Seed the database** (migrations create schema only, not data): point `DATABASE_URL` at Postgres's public proxy URL and run `python scripts/seed_sample_data.py` once — creates the 4 properties and loads `data/sample_reviews.json` plus keyword classification.
+4. **Frontend:** deploy `frontend/` the same way, with `VITE_API_BASE_URL=<backend public URL>` set *before* building (Vite bakes it in at build time, not runtime). `frontend/railway.json` serves the build via `vite preview`.
+
+Three real deployment bugs surfaced and got fixed here, worth knowing if you redeploy elsewhere:
+- **Railway's `DATABASE_URL` has no driver suffix** (`postgresql://`, not `postgresql+asyncpg://`) — SQLAlchemy silently falls back to `psycopg2`, which isn't installed. Fixed with a Pydantic validator in `app/config.py` that normalizes the URL for every caller (app, Alembic, scripts), not just a one-off patch.
+- **Vite's `preview` server rejects unrecognized `Host` headers** by default (DNS-rebinding protection) — needs `preview.allowedHosts` set in `vite.config.ts`.
+- **Nixpacks defaulted to Node 18**, too old for this Vite/Rolldown toolchain (needs 20+) — pinned via `frontend/.nvmrc` and `package.json`'s `engines` field.
+
 ## Sample data
 
 `data/sample_reviews.json` — a committed snapshot of real reviews scraped from all four properties (47 reviews as of the last export). Re-export anytime with:
@@ -122,13 +143,13 @@ Azuro/
 ├── backend/
 │   ├── app/
 │   │   ├── api/              # FastAPI routers: properties, reviews, insights, scrape, health
-│   │   ├── models/           # SQLAlchemy: Property, Review, ReviewTopic, ScrapeRun
+│   │   ├── models/           # SQLAlchemy: Property, Review, ReviewTopic, ScrapeRun, LlmInsightRun
 │   │   ├── schemas/          # Pydantic request/response models
 │   │   ├── services/         # scrape_service.py -- shared by CLI, cron, and the API endpoint
 │   │   ├── scraper/          # booking_scraper.py, parser.py, human.py, apify_fallback.py
 │   │   ├── classification/   # keyword lexicon/classifier + Claude Haiku client
 │   │   └── db/                # session, base
-│   ├── scripts/               # run_scrape.py, run_all_properties.py, export_sample_data.py, classify_keyword.py
+│   ├── scripts/               # run_scrape.py, run_all_properties.py, export_sample_data.py, classify_keyword.py, seed_sample_data.py
 │   └── alembic/                # migrations
 ├── frontend/
 │   └── src/
@@ -158,12 +179,15 @@ Booking.com's terms explicitly prohibit automated scraping without prior written
 
 ## Review insights methodology
 
-1. **Keyword pass (default, always on, free):** a curated phrase lexicon per topic (`app/classification/keyword_lexicon.py`), matched against `positive_text`/`negative_text` independently — sentiment comes from which field matched, not a separate sentiment model. Every topic (cleanliness, check-in, staff, noise, facilities, location, room condition, value for money) gets a flat confidence score, since a keyword match is binary, not graded.
-2. **LLM fallback (Claude Haiku 4.5, off by default):** only for reviews where the keyword pass found nothing on non-trivial text — e.g. non-English reviews the English-only lexicon misses. Hard-capped (`MAX_LLM_CLASSIFICATIONS`, default 50) so a single run can't exceed a few cents. Toggle with `ENABLE_LLM_CLASSIFICATION=true` + a real `ANTHROPIC_API_KEY`.
-3. Every classification row records its `source` (`keyword`/`llm`) so the methodology is auditable, not just asserted.
+1. **Keyword pass (default, always on, free):** a curated phrase lexicon per topic (`app/classification/keyword_lexicon.py`), matched against `positive_text`/`negative_text` independently — sentiment comes from which field matched, not a separate sentiment model. Every topic (cleanliness, check-in, staff, noise, facilities, location, room condition, value for money) gets a flat confidence score, since a keyword match is binary, not graded. This is the always-on path — classification works fully with zero AI calls.
+2. **LLM fallback (Claude Haiku 4.5, off by default):** only for reviews where the keyword pass found nothing on non-trivial text — e.g. non-English reviews the English-only lexicon misses. Every classification row records its `source` (`keyword`/`llm`) so the methodology is auditable, not just asserted.
+3. **Both panels show positive and negative breakdowns per topic**, not negative-only — a topic guests only ever praise (e.g. Location) is as much an insight as one they complain about, and sorting is by total mentions so it isn't buried.
+4. **"Get AI Insights" runs at most once per calendar day per scope** (collective or per-property), tracked in an `llm_insight_runs` table — re-running against the same reviews can yield different results from the model on identical input, and there's no new information to extract until the next scrape anyway. The button shows "Generated today" and a persisted "Last generated" timestamp once used; results survive a page reload.
+5. **Manager's Briefing — the part keyword-matching structurally can't do.** Beyond re-tagging reviews (which keyword-matching already covers), each AI run also generates a short 2-4 sentence synthesis: the standout recurring issue plus one concrete, actionable suggestion (e.g. *"Room condition is the most significant issue, with N negative mentions... prioritize a systematic room audit..."*). It's grounded in the real aggregated topic counts and verbatim negative-review excerpts fed into the prompt — not free-associated — so it can't invent a statistic that doesn't match the bars next to it. Hard-capped (`MAX_LLM_CLASSIFICATIONS`, default 50 reviews/run) so a run costs a few cents at most.
 
 ## Known limitations and assumptions
 
+- **The manual scrape trigger is enabled on the live Railway demo**, unlike the safer default described above — the build installs Chromium and, live-tested, the primary Patchright scraper does run successfully there (confirmed server-side: real navigation, `source=patchright`, completed in ~18s). What's **not fully verified is the frontend's live status display** on that deployment — during testing it showed a stale "No scrape has run yet." message after a run that had actually already completed successfully (confirmed independently via the API and the `scrape_runs` table). The scrape itself works; treat the UI's real-time status text on the Railway demo with some caution until this is root-caused, and prefer running locally (`scripts/run_scrape.py`) if you need to trust the on-screen result immediately.
 - **Scraping reliability is probabilistic, not guaranteed.** The human-pacing and UA fixes measurably worked in testing (100% success rate across all 4 properties during development), but Booking.com can change its detection at any time.
 - **Reviewer country has a rare render-timing bug:** the avatar block briefly shows a placeholder ("7 reviews", "Active since 2018") before its flag/country element finishes loading. Confirmed live that affected reviewers have real countries in the DOM moments later. Mitigated by rejecting known placeholder patterns and storing `null` rather than wrong data — a handful of reviews have a `null` country as a result, better than a wrong one.
 - **One unresolved parsing edge case:** a single review has `reviewer_name="A"` with a stray value in the country field, not matching the placeholder-pattern fix above. Left as-is rather than guessing at a fix without more examples to pattern-match against.
