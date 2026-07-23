@@ -24,4 +24,5 @@ async def health(
         "database": db_status,
         "llm_classification_enabled": settings.llm_configured,
         "apify_fallback_configured": settings.apify_configured,
+        "scrape_endpoint_enabled": settings.enable_scrape_endpoint,
     }

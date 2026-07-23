@@ -11,6 +11,7 @@ class PropertyOut(BaseModel):
     slug: str
     city: str
     booking_url: str
+    thumbnail_url: str | None
 
 
 class PropertySummaryOut(BaseModel):

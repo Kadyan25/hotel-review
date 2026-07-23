@@ -14,6 +14,7 @@ class Property(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     booking_url: Mapped[str] = mapped_column(String(1000))
     city: Mapped[str] = mapped_column(String(255))
+    thumbnail_url: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     reviews: Mapped[list["Review"]] = relationship(back_populates="property", cascade="all, delete-orphan")

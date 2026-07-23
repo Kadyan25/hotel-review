@@ -7,6 +7,7 @@ architecture.md "Where the scraper is allowed to run".
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 
 from patchright.async_api import async_playwright
@@ -37,6 +38,27 @@ class ScraperBlockedError(Exception):
     """Raised when Booking.com appears to have blocked/CAPTCHA'd the session."""
 
 
+@dataclass
+class ScrapeResult:
+    reviews: list[dict]
+    thumbnail_url: str | None
+
+
+async def _extract_thumbnail(page) -> str | None:
+    """Grabs the first real gallery photo URL while we're already on the
+    property page -- no extra navigation/request. Hotlinked directly (not
+    downloaded/rehosted), so it depends on Booking's CDN token in the URL
+    staying valid; frontend falls back to an icon if the image 404s.
+    """
+    try:
+        img = page.locator('img[src*="bstatic.com"][src*="/hotel/"]').first
+        if await img.count() == 0:
+            return None
+        return await img.get_attribute("src")
+    except Exception:
+        return None
+
+
 async def _goto_with_retry(page, url: str) -> None:
     last_error: Exception | None = None
     for attempt in range(NAVIGATION_RETRIES):
@@ -60,8 +82,8 @@ async def scrape_property_reviews(
     max_pages: int,
     known_external_ids: set[str] | None = None,
     cutoff_date: date | None = None,
-) -> list[dict]:
-    """Scrapes newest-first reviews for one property.
+) -> ScrapeResult:
+    """Scrapes newest-first reviews for one property, plus its thumbnail.
 
     Stops on whichever of these comes first:
       - a full page is entirely already-seen (known_external_ids) -- the
@@ -100,9 +122,12 @@ async def scrape_property_reviews(
         )
         page = await context.new_page()
 
+        thumbnail_url: str | None = None
+
         try:
             await _goto_with_retry(page, property_def.booking_url)
             await human_delay(*PAGE_LOAD_DELAY)
+            thumbnail_url = await _extract_thumbnail(page)
 
             reviews_tab = page.locator(REVIEWS_TAB_SELECTOR)
             if await reviews_tab.count() == 0:
@@ -168,4 +193,4 @@ async def scrape_property_reviews(
             await context.close()
             await browser.close()
 
-    return reviews
+    return ScrapeResult(reviews=reviews, thumbnail_url=thumbnail_url)
